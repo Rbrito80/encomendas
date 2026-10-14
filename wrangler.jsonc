@@ -1,0 +1,9 @@
+{
+  "name": "encomendas",
+  "main": "src/index.js",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "d1_databases": [
+    { "binding": "DB", "database_name": "cabazes-db", "database_id": "b205defb-ed7e-4d0c-ae99-ba93fa0305be" }
+  ]
+}
