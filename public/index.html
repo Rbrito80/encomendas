@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="pt-PT">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Encomendas de Cabazes</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--tx:#1d2330;--mu:#6b7280;--bd:#d9dde5;--ac:#6b3a14}
+@media(prefers-color-scheme:dark){:root{--bg:#14171c;--card:#1e222a;--tx:#e8eaf0;--mu:#9aa3b2;--bd:#323846;--ac:#b9743a}}
+*{box-sizing:border-box}
+body{margin:0;font:14px system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:16px}
+.hd{display:flex;align-items:center;gap:14px;margin-bottom:12px}
+.hd img{height:64px;background:#fff;border-radius:8px;padding:4px}
+h1{font-size:20px;margin:0}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:14px;margin-bottom:14px}
+form{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}
+label{display:flex;flex-direction:column;font-size:12px;color:var(--mu);gap:3px}
+input,select,textarea,button{font:inherit;padding:7px 9px;border:1px solid var(--bd);border-radius:6px;background:var(--bg);color:var(--tx)}
+button{cursor:pointer;background:var(--ac);color:#fff;border-color:var(--ac)}
+button.sec{background:transparent;color:var(--tx);border-color:var(--bd)}
+.wide{grid-column:1/-1}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%}
+th,td{padding:6px 8px;border-bottom:1px solid var(--bd);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--mu);white-space:nowrap}
+td.n,th.n{text-align:right;white-space:nowrap}
+.wrap{min-width:160px;max-width:260px}
+.mu{color:var(--mu);font-size:12px}
+.tot{margin-left:auto;font-weight:600}
+.chip{flex-direction:row;align-items:center;gap:4px;font-size:13px;color:var(--tx);border:1px solid var(--bd);border-radius:14px;padding:3px 10px}
+.lines td{border:0;padding:3px 4px}
+.lines input{width:100%}
+</style>
+</head>
+<body>
+<div class="hd"><img src="logo.png" alt="M Rogeira"><h1>Encomendas de Cabazes</h1></div>
+
+<div id="lg" class="card" hidden><form id="lf" class="row"><input id="pin" type="password" autocomplete="off" placeholder="PIN" required><button>Entrar</button><span id="lm" style="color:#d33"></span></form></div>
+
+<div id="app" hidden>
+<div class="card">
+<form id="f">
+ <label>Cliente*<input id="cliente" required></label>
+ <label>Contacto<input id="contacto"></label>
+ <label>Data da encomenda<input id="data" type="date"></label>
+ <label>Data de entrega<input id="entrega" type="date"></label>
+ <label>Estado<select id="estado"></select></label>
+ <label class="wide">Morada de entrega<input id="morada"></label>
+ <div class="wide tw">
+  <table class="lines"><thead><tr><th>Tipo de cabaz*</th><th>Qtd</th><th>Preço unit. (€)</th><th class="n">Subtotal</th><th></th></tr></thead><tbody id="lb"></tbody></table>
+  <div class="row" style="margin-top:6px"><button type="button" class="sec" onclick="al()">+ Adicionar cabaz</button><b id="lt" class="tot"></b></div>
+ </div>
+ <datalist id="tipos"></datalist>
+ <label class="wide">Observações<textarea id="obs" rows="2"></textarea></label>
+ <div class="row wide">
+  <button type="submit" id="save">Adicionar encomenda</button>
+  <button type="button" class="sec" id="cancel" hidden>Cancelar edição</button>
+ </div>
+</form>
+</div>
+
+<div class="card">
+ <div class="row" style="margin-bottom:10px">
+  <b>Estados:</b><span id="es" class="row"></span>
+  <label style="flex-direction:row;align-items:center;gap:6px">Entrega de <input id="de" type="date"> a <input id="ate" type="date"></label>
+  <input id="q" placeholder="Pesquisar…">
+  <button class="sec" onclick="limpar()">Limpar filtros</button>
+ </div>
+ <div class="row" style="margin-bottom:10px">
+  <button id="xl">Exportar para Excel</button>
+  <span class="mu" id="rs"></span>
+  <span class="tot" id="tot"></span>
+ </div>
+ <div class="tw"><table>
+  <thead><tr><th>Nº</th><th>Entrega</th><th>Cliente</th><th>Morada de entrega</th><th>Cabazes</th><th class="n">Total</th><th>Estado</th><th>Obs.</th><th></th></tr></thead>
+  <tbody id="tb"></tbody>
+ </table></div>
+</div>
+</div>
+
+<script>
+const API='/api/encomendas';
+const ESTADOS=['Pendente','Entregue','Faturado','Pago','Cancelado'];
+const F=['cliente','contacto','morada','data','entrega','estado','obs'];
+let db=[],editId=null,lines=[],pin=sessionStorage.getItem('pin')||'';
+const $=id=>document.getElementById(id);
+const eur=n=>n.toLocaleString('pt-PT',{style:'currency',currency:'EUR'});
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const today=()=>new Date().toISOString().slice(0,10);
+const fd=s=>s?s.split('-').reverse().join('/'):'';
+const tot=o=>o.linhas.reduce((a,l)=>a+l.qtd*l.preco,0);
+const gate=ok=>{$('lg').hidden=ok;$('app').hidden=!ok};
+const fail=(e,p)=>{if(e.message!=='401')alert(p+e.message)};
+
+async function api(m,id,b){
+  const r=await fetch(API+(id?'?id='+id:''),{method:m,headers:{'content-type':'application/json','x-pin':pin},body:b?JSON.stringify(b):undefined});
+  if(r.status===401){const had=pin;pin='';sessionStorage.removeItem('pin');gate(false);$('lm').textContent=had?'PIN incorreto':'';throw new Error('401')}
+  if(!r.ok)throw new Error(await r.text());return r.json()}
+async function load(){try{db=await api('GET');gate(true);render()}catch(e){fail(e,'Erro ao carregar: ')}}
+
+// ---- linhas do formulário
+function drawLines(){
+  $('lb').innerHTML=lines.map((l,i)=>`<tr><td><input list="tipos" value="${esc(l.tipo)}" oninput="ul(${i},'tipo',this.value)" placeholder="Tipo de cabaz"></td><td style="width:90px"><input type="number" min="1" value="${l.qtd}" oninput="ul(${i},'qtd',this.value)"></td><td style="width:120px"><input type="number" min="0" step="0.01" value="${l.preco}" oninput="ul(${i},'preco',this.value)"></td><td class="n" id="st${i}">${eur(l.qtd*l.preco)}</td><td><button type="button" class="sec" onclick="rl(${i})">✕</button></td></tr>`).join('');
+  ltot();
+}
+const ltot=()=>$('lt').textContent='Total: '+eur(lines.reduce((a,l)=>a+l.qtd*l.preco,0));
+function ul(i,k,v){lines[i][k]=k==='tipo'?v:+v;$('st'+i).textContent=eur(lines[i].qtd*lines[i].preco);ltot()}
+function al(){lines.push({tipo:'',qtd:1,preco:0});drawLines()}
+function rl(i){lines.splice(i,1);if(!lines.length)lines.push({tipo:'',qtd:1,preco:0});drawLines()}
+
+function reset(){
+  $('f').reset();$('data').value=today();editId=null;
+  lines=[{tipo:'',qtd:1,preco:0}];drawLines();
+  $('save').textContent='Adicionar encomenda';$('cancel').hidden=true;
+}
+function filtered(){
+  const q=$('q').value.toLowerCase(),de=$('de').value,ate=$('ate').value;
+  const es=[...document.querySelectorAll('#es input:checked')].map(c=>c.value);
+  return db.filter(o=>(!es.length||es.includes(o.estado))&&(!de||(o.entrega&&o.entrega>=de))&&(!ate||(o.entrega&&o.entrega<=ate))&&(!q||[o.id,o.cliente,o.contacto,o.morada,o.obs,...o.linhas.map(l=>l.tipo)].join(' ').toLowerCase().includes(q)))
+   .sort((a,b)=>(a.entrega||'9999').localeCompare(b.entrega||'9999')||a.id-b.id);
+}
+function resumo(L){ // totais por tipo (sem cancelados)
+  const t={};L.filter(o=>o.estado!=='Cancelado').forEach(o=>o.linhas.forEach(l=>{const r=t[l.tipo]??={qtd:0,valor:0};r.qtd+=l.qtd;r.valor+=l.qtd*l.preco}));
+  return t;
+}
+function render(){
+  const L=filtered(),t=resumo(L),act=L.filter(o=>o.estado!=='Cancelado');
+  $('tb').innerHTML=L.map(o=>`<tr><td>${o.id}</td><td>${fd(o.entrega)}</td><td>${esc(o.cliente)}<div class="mu">${esc(o.contacto)}</div></td><td class="wrap">${esc(o.morada)}</td><td>${o.linhas.map(l=>`${l.qtd}× ${esc(l.tipo)}`).join('<br>')}</td><td class="n">${eur(tot(o))}</td><td>${esc(o.estado)}</td><td class="wrap">${esc(o.obs)}</td><td style="white-space:nowrap"><button class="sec" onclick="ed(${o.id})">Editar</button> <button class="sec" onclick="del(${o.id})">Apagar</button></td></tr>`).join('');
+  $('tot').textContent=`${L.length} encomendas · ${Object.values(t).reduce((a,r)=>a+r.qtd,0)} cabazes · ${eur(act.reduce((a,o)=>a+tot(o),0))}`;
+  $('rs').textContent=Object.entries(t).map(([k,r])=>`${k}: ${r.qtd}`).join(' · ');
+  $('tipos').innerHTML=[...new Set(db.flatMap(o=>o.linhas.map(l=>l.tipo)))].map(x=>`<option value="${esc(x)}">`).join('');
+}
+$('f').onsubmit=async e=>{
+  e.preventDefault();
+  const o={};F.forEach(k=>o[k]=$(k).value.trim());
+  o.linhas=lines.filter(l=>l.tipo.trim()).map(l=>({tipo:l.tipo.trim(),qtd:l.qtd||1,preco:l.preco||0}));
+  if(!o.linhas.length){alert('Adiciona pelo menos um cabaz.');return}
+  try{await api(editId?'PUT':'POST',editId,o);reset();await load()}catch(err){fail(err,'Erro ao guardar: ')}
+};
+function ed(id){
+  const o=db.find(x=>x.id===id);if(!o)return;
+  F.forEach(k=>$(k).value=o[k]??'');editId=id;
+  lines=o.linhas.map(l=>({tipo:l.tipo,qtd:l.qtd,preco:l.preco}));drawLines();
+  $('save').textContent='Guardar alterações';$('cancel').hidden=false;scrollTo(0,0);
+}
+async function del(id){if(confirm('Apagar a encomenda '+id+'?')){try{await api('DELETE',id);await load()}catch(err){fail(err,'')}}}
+function limpar(){document.querySelectorAll('#es input').forEach(c=>c.checked=false);$('de').value=$('ate').value=$('q').value='';render()}
+$('cancel').onclick=reset;$('q').oninput=render;$('de').onchange=$('ate').onchange=render;
+$('es').innerHTML=ESTADOS.map(e=>`<label class="chip"><input type="checkbox" value="${e}" onchange="render()">${e}</label>`).join('');
+$('estado').innerHTML=ESTADOS.map(e=>`<option>${e}</option>`).join('');
+
+// ---- Excel (ExcelJS, com logo)
+$('xl').onclick=async()=>{
+  const L=filtered();if(!L.length){alert('Sem encomendas para exportar.');return}
+  const wb=new ExcelJS.Workbook(),BR='FF4F2A0C',D=s=>s?new Date(s+'T00:00:00Z'):null;
+  let img=null;
+  try{const r=await fetch('logo.png');img=wb.addImage({buffer:await r.arrayBuffer(),extension:'png'})}catch(e){}
+  const head=(ws,title,sub,row,cols)=>{
+    if(img!==null)ws.addImage(img,{tl:{col:0,row:0},ext:{width:150,height:109}});
+    ws.getCell('E2').value=title;ws.getCell('E2').font={bold:true,size:16,color:{argb:BR}};
+    ws.getCell('E3').value=sub;ws.getCell('E3').font={italic:true,color:{argb:'FF666666'}};
+    const h=ws.getRow(row);h.values=cols;
+    h.eachCell(c=>{c.font={bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:BR}}});
+  };
+  const de=$('de').value,ate=$('ate').value,es=[...document.querySelectorAll('#es input:checked')].map(c=>c.value);
+  const sub='Exportado em '+fd(today())+(es.length?' · Estados: '+es.join(', '):'')+(de||ate?' · Entrega: '+(fd(de)||'…')+' a '+(fd(ate)||'…'):'');
+
+  const ws=wb.addWorksheet('Encomendas',{views:[{state:'frozen',ySplit:6}]});
+  head(ws,'Encomendas de Cabazes',sub,6,['Nº','Data encomenda','Data entrega','Cliente','Contacto','Morada de entrega','Tipo de cabaz','Qtd','Preço unit.','Total','Estado','Observações']);
+  [8,14,13,26,15,34,24,7,12,12,12,30].forEach((w,i)=>ws.getColumn(i+1).width=w);
+  let r=7;
+  L.forEach(o=>o.linhas.forEach(l=>{
+    const row=ws.getRow(r);
+    row.values=[o.id,D(o.data),D(o.entrega),o.cliente,o.contacto,o.morada,l.tipo,l.qtd,l.preco,{formula:`H${r}*I${r}`,result:l.qtd*l.preco},o.estado,o.obs];
+    row.getCell(2).numFmt=row.getCell(3).numFmt='dd/mm/yyyy';
+    row.getCell(9).numFmt=row.getCell(10).numFmt='#,##0.00 "€"';
+    r++;
+  }));
+  ws.autoFilter={from:{row:6,column:1},to:{row:r-1,column:12}};
+
+  const w2=wb.addWorksheet('Resumo por cabaz'),t=resumo(L);
+  head(w2,'Resumo por tipo de cabaz',sub+' · sem cancelados',6,['Tipo de cabaz','Quantidade','Valor']);
+  [28,12,14].forEach((w,i)=>w2.getColumn(i+1).width=w);
+  let k=7;Object.entries(t).forEach(([n,v])=>{w2.getRow(k).values=[n,v.qtd,v.valor];w2.getCell(k,3).numFmt='#,##0.00 "€"';k++});
+  w2.getRow(k).values=['Total',{formula:`SUM(B7:B${k-1})`},{formula:`SUM(C7:C${k-1})`}];
+  w2.getRow(k).font={bold:true};w2.getCell(k,3).numFmt='#,##0.00 "€"';
+
+  const buf=await wb.xlsx.writeBuffer();
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}));
+  a.download='encomendas_cabazes_'+today()+'.xlsx';a.click();
+};
+$('lf').onsubmit=e=>{e.preventDefault();pin=$('pin').value;sessionStorage.setItem('pin',pin);$('pin').value='';load()};
+reset();load();
+</script>
+</body>
+</html>
